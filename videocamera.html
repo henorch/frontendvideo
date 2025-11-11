@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>V-chat</title>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    video { width: 300px; margin: 5px; background: black; }
+  </style>
+</head>
+<body>
+
+<button id="startCam">Start Camera</button>
+<button id="shareScreen">Share Screen</button>
+
+<div>
+  <h3>Me</h3>
+  <video id="localVideo" autoplay playsinline></video>
+</div>
+
+<div>
+  <h3>Remote</h3>
+  <video id="remoteVideo" autoplay playsinline></video>
+</div>
+
+<script>
+const socket = io("https://videocall-900w.onrender.com");
+
+const roomId = "classroom101";
+socket.emit("join-room", roomId);
+
+let localStream;
+let pc = new RTCPeerConnection();
+
+// send ICE candidates
+pc.onicecandidate = (e) => {
+  if (e.candidate) {
+    socket.emit("ice-candidate", { candidate: e.candidate, to: remoteId });
+  }
+};
+
+// display remote stream
+pc.ontrack = (e) => {
+  document.getElementById("remoteVideo").srcObject = e.streams[0];
+};
+
+let remoteId;
+
+// handle someone joining
+socket.on("user-joined", async (id) => {
+  remoteId = id;
+  let offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  socket.emit("offer", { sdp: offer, to: id, from: socket.id });
+});
+
+// receive offer
+socket.on("offer", async ({ sdp, from }) => {
+  remoteId = from;
+  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+  let answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  socket.emit("answer", { sdp: answer, to: from, from: socket.id });
+});
+
+// receive answer
+socket.on("answer", async ({ sdp }) => {
+  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+});
+
+// ICE
+socket.on("ice-candidate", async (candidate) => {
+  try { await pc.addIceCandidate(candidate); } catch(e) {}
+});
+
+// CAMERA
+document.getElementById("startCam").onclick = async () => {
+  localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+  document.getElementById("localVideo").srcObject = localStream;
+
+  localStream.getTracks().forEach(track =>
+    pc.addTrack(track, localStream)
+  );
+};
+
+// SCREEN SHARE
+document.getElementById("shareScreen").onclick = async () => {
+  const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+  
+  const screenTrack = screenStream.getVideoTracks()[0];
+
+  const sender = pc.getSenders().find(s => s.track.kind === "video");
+  sender.replaceTrack(screenTrack);
+
+  screenTrack.onended = () => {
+    sender.replaceTrack(localStream.getVideoTracks()[0]);
+  };
+};
+</script>
+</body>
+</html>
